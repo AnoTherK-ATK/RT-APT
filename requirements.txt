@@ -1,0 +1,7 @@
+pandas~=2.2.3
+numpy~=2.2.4
+networkx~=3.4.2
+matplotlib~=3.10.1
+joblib~=1.5.1
+scikit-learn~=1.6.1
+tqdm~=4.67.1
