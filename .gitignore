@@ -2,3 +2,5 @@
 *.csv
 *.7z
 *.joblib
+.venv/
+*.json
