@@ -1,21 +1,13 @@
-import pandas as pd
 import numpy as np
 import hashlib
 import networkx as nx
 from collections import Counter, deque
-from sklearn.cluster import KMeans
-from sklearn.decomposition import PCA
-from sklearn.metrics import classification_report
-from sklearn.preprocessing import StandardScaler
-import os
-from tqdm import tqdm
-import matplotlib.pyplot as plt
 import joblib
-import random as rd
 import json
 import pexpect
 import time
-
+# from tkinter import messagebox
+import sys
 kmeans = joblib.load("kmeans_model.joblib")
 scaler = joblib.load("scaler.joblib")
 
@@ -68,12 +60,12 @@ def wl_subtree_features(graph, k=2):
         current_labels = new_labels
     return features
 
-def flexsketch_vector_from_graph(graph: nx.DiGraph, k: int = 2, max_bins: int = 100, max_histograms: int = 5):
+def flexsketch_vector_from_graph(graph: nx.DiGraph, k: int = 3, max_bins: int = 100, max_histograms: int = 5, sketch: FlexSketch = None):
     wl_feats = wl_subtree_features(graph, k)
     all_labels = []
     for labels in wl_feats.values():
         all_labels.extend(labels)
-    sketch = FlexSketch(max_bins=max_bins, max_histograms=max_histograms)
+    # sketch = FlexSketch(max_bins=max_bins, max_histograms=max_histograms)
     sketch.update(Counter(all_labels))
     return sketch.estimate_vector()
 
@@ -94,29 +86,34 @@ def build_graph_from_spade(events):
 
     return G
 
+sketch = FlexSketch(max_bins=max_bins, max_histograms=max_histograms)
+
 def min_distance(x):
     return np.min(np.linalg.norm(kmeans.cluster_centers_ - x, axis=1))
 
 def detect(x):
-    if(min_distance(x) < threshold):
+    print(min_distance(x))
+    if min_distance(x) < threshold:
         return 0
     else:
         return 1
 
 # Đường dẫn tới file log gốc và nơi lưu file tổng hợp
-SOURCE_JSON_PATH = "/home/kda/log.json"
-
-def real_time_spade(cycle_count=3, wait_seconds=30):
-    print(f"[+] Starting spade control for {cycle_count} cycles...")
+SOURCE_JSON_PATH = "/home/semloh/log.json"
+LOG_PATH = "/home/semloh/result.txt"
+total = {"benign": 0, "attack": 0}
+def real_time_spade(cycle_count=3, wait_seconds=60):
+    # print(f"[+] Starting spade control for {cycle_count} cycles...")
     child = pexpect.spawn("spade control", encoding='utf-8')
     child.expect("->")
     i = 0
-    while(True):
+    global total
+    while True:
         i += 1
-        print(f"\n===== Cycle {i} / {cycle_count} =====")
+        print(f"\n===== Cycle {i} =====")
 
         # Add reporter
-        child.sendline("add storage JSON output=/home/kda/log.json")
+        child.sendline("add storage JSON output=/home/semloh/log.json")
         child.expect("->")
         print(f"[+] [{i}] Storage added.")
 
@@ -133,16 +130,34 @@ def real_time_spade(cycle_count=3, wait_seconds=30):
         with open(SOURCE_JSON_PATH, "r", encoding="utf-8") as f:
             data = json.load(f)
             graph = build_graph_from_spade(data)
-            vector = flexsketch_vector_from_graph(graph, k=3, max_bins=100, max_histograms=5)
-            vector_scaled = scaler.transform([vector])
-            if(detect(vector_scaled[0])):
+            vector = flexsketch_vector_from_graph(graph, k=3, max_bins=100, max_histograms=5, sketch=sketch)
+            vector_scaled = scaler.transform(np.array([vector]))
+            if detect(vector_scaled[0]):
                 print(f"[+] [{i}] attack detected.")
+                total["attack"] += 1
+                # messagebox.showwarning("Attack Detected", f"Potential attack detected in cycle {i}!")
             else:
                 print(f"[+] [{i}] benign.")
+                total["benign"] += 1
 
+
+        f = open(SOURCE_JSON_PATH, "w", encoding="utf-8")
+        f.write("")
+        f.close()
+        print(total)
+        print(f"benign: {total['benign'] / (total["benign"] + total["attack"]) * 100}%")
+        print(f"attack: {total['attack'] / (total["benign"] + total["attack"]) * 100}%")
+        with open(LOG_PATH, "w", encoding="utf-8") as f:
+            f.write(json.dumps(total, indent=4))
     child.sendline("exit")
     child.expect(pexpect.EOF)
     print("\n[+] Finished all cycles.")
 
 if __name__ == "__main__":
+    kmeans = joblib.load("kmeans_model.joblib")
+    scaler = joblib.load("scaler.joblib")
+
+    # Load threshold
+    with open("threshold.json", "r") as f:
+        threshold = json.load(f)["threshold"]
     real_time_spade()
